@@ -57,6 +57,14 @@ def writeEdges(filename,G):
     OUT.close()
 
 
+def getMaxGeneration(G):
+    maxGen = 0
+    for n in G.nodes():
+        g = getNodeGeneration(n)
+        if g > maxGen:
+            maxGen = g
+    return maxGen
+
 ### very crude implemntation
 
 import sys
@@ -85,6 +93,13 @@ try:
     
     SpecialGen = [] ## generation we want to exclude from this cropping (the last generation for instance ... )
     
+    SpecialGen.append( getMaxGeneration(G) )
+
+    SpecialGen.append(873)
+    SpecialGen.append(895)
+    SpecialGen.append(929)
+    SpecialGen.append(940)
+    SpecialGen.append(981)
     
     N1 = G.number_of_edges()
     
