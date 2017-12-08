@@ -121,7 +121,8 @@ def shiftPoints(Edges, ToFather, newPoints, currentGen , offset = 1):
 	return
 
 
-def determineAvailableAnglesAndArc(p , pointIndex, currentPTS, newPoints , lowerRedfactor , upperRedFactor , generation):
+
+def determineAvailableAnglesAndArc(p , pointIndex, currentPTS, newPoints , lowerRedfactor , upperRedFactor , currentRadius):
 	""" returns the length of the 'available' arc of this point, as well as the lower and upper angle """
 	lowerB = -np.pi 
 	upperB = np.pi
@@ -140,8 +141,19 @@ def determineAvailableAnglesAndArc(p , pointIndex, currentPTS, newPoints , lower
 	## reduction of the available angle
 	lowerB *= lowerRedfactor
 	upperB *= upperRedFactor
-	space =  ( upperB - lowerB ) * (d+1)
+	space =  ( upperB - lowerB ) * currentRadius
 	return space , lowerB, upperB
+
+def makeHardExtinction(nbPoints, Thin, minNbSurvivor = 2):
+	""" return a survive mask """
+	nbSurvivor = max( 2 , nbPoints/THIN )
+
+	survivors = np.random.choice(range(nbPoints), size=nbSurvivor, replace=False)	
+
+	SURVIVE = [False for i in range(nbPoints)] 
+	for i in survivors:
+		SURVIVE[i] = True
+	return SURVIVE
 	
 def write_tree(filename , Points, Edges):
 	"""
@@ -179,9 +191,13 @@ def write_tree(filename , Points, Edges):
 ###### PARAMETERS ############################
 
 mmPerGen = 0.5  ### number of millimeters per generations. 
-nbGen = 500 / mmPerGen ### number of generation. Here set so that the final tree has a total radius of 500mm (1 meter of diameter)
+totalSizeInmm = 500.
 
-EXPECTEDNBPTPERMM = 0.05 * mmPerGen ## determine how many "biological niche" there is per millimeter of circle perimeter (1 circle = 1 generation)
+nbGen = int(totalSizeInmm / mmPerGen )### number of generation. Here set so that the final tree has a total radius of 500mm (1 meter of diameter)
+
+ExpectedNbPtAtOuterCircle = totalSizeInmm * 2. * np.pi * 0.05
+
+EXPECTEDNBPTPERMM =  ExpectedNbPtAtOuterCircle / ( totalSizeInmm * 2. * np.pi ) #* mmPerGen ## determine how many "biological niche" there is per millimeter of circle perimeter (1 circle = 1 generation)
 ### currently 0.05 niche per mm --> should create about 1 point every 2 cm.
 
 
@@ -206,7 +222,10 @@ CHDISPERSIONPOWER= 2. ## affect the dispersion of different children round their
 VARNBCHILDREN = 1. ## variance of the number of children per lineage.
 MAXNBCHILDREN = 5 ##maximum number of children
 
-TREENAME = "BigTree" ## prefix of the output files
+MaxChildrenSpace = 120 ## in mm
+
+
+TREENAME = "test" ## prefix of the output files
 
 
 
@@ -218,7 +237,30 @@ SEUIL_XTINCT = [ #]
 		int( ( (1. - (1.86/100.) ) *nbGen  ) )] ## extinction thresholds
 
 
-THIN = 10 ## extinction thinning. here it means that only 1 in 10 lineage are left alive (at least 2)
+THIN = 5 ## extinction thinning. here it means that only 1 in 5 lineage are left alive (at least 2)
+
+
+## soft extinction
+
+lineageSpecificReductionFactor = {}
+NonSurvivorReductionFactor = 0.8
+NonSurvivorReductionFactorDiminution = 0. # NonSurvivorReductionFactor/100.
+
+softXtinctGen = int( nbGen*0.25 )
+
+nbSurvivivingSoftExtinct = 2
+
+MustSurvive = [] ## list of lineage that must survive until the present
+MustDie = {} ## list of lineages that must die sometime before the present
+
+MustDieMinXtinctProba = 0.1
+MustDieMaxXtinctProba = 0.3
+
+## constant point density 
+
+
+PRESUMECONSTANTCIRCLEPERIMETER = True
+CONSTANTCIRCLEPERIMETERRADIUS = 1.* totalSizeInmm
 
 
 ##############################################
@@ -249,17 +291,18 @@ while i<len(currentPTS):
 	Points[-1].append( angleDistToXY( p,0 ) )
 	i+=1
 
-
-
 while d < nbGen:
 
 
 	if d%100 == 0:
 		print "generation", d, "(",len(currentPTS),"points)"
 
-	newPoints = []
-	newToFather = {}
+	newPoints = [] ## points created this generation
+	newToFather = {} ## difference of angle to the parent
 
+	newlineageSpecificReductionFactor = {}
+	newMustSurvive = []
+	newMustDie = {}
 
 	i = 0
 	while i<len(currentPTS):
@@ -273,46 +316,108 @@ while d < nbGen:
 
 		p = currentPTS[pointIndex]
 
+		#print pointIndex , p , len(currentPTS)
 
-		## determining available angle 
-		space, lowerB, upperB = determineAvailableAnglesAndArc(p , pointIndex, currentPTS, newPoints , reductionFactor , reductionFactor , d):
-		
+		##determining the 'available' angle 
+
+		redFactor = lineageSpecificReductionFactor.get(pointIndex, reductionFactor)
+
+		space,lowerB,upperB = determineAvailableAnglesAndArc(p , 
+															 pointIndex, 
+															 currentPTS, 
+															 newPoints , 
+															 redFactor, 
+															 redFactor, 
+															 (d+1)*mmPerGen)
+
+
+		## correction when too much space is available (typically after extinction)
+		if space > MaxChildrenSpace:
+			#print d, space , ">" , MaxChildrenSpace, "->",
+			upperB *= MaxChildrenSpace/space
+			lowerB *= MaxChildrenSpace/space
+			space =  ( upperB - lowerB ) * (d+1) * mmPerGen 
+			#print space
+
+		#correcting if we have a constant expected number if individuals per generation
+		if PRESUMECONSTANTCIRCLEPERIMETER:
+			space = ( upperB - lowerB ) * CONSTANTCIRCLEPERIMETERRADIUS
+
+
 		#print lowerB , upperB ,"->", space
 		XpectedNbCh = space * EXPECTEDNBPTPERMM
 		#print "->",XpectedNbCh,
 
-		## computation of the number of children
-		nbCh =  min(MAXNBCHILDREN, max(0 , int(XpectedNbCh + np.random.randn() * VARNBCHILDREN ) ) ) ##np.random.poisson(XpectedNbCh) )
+
+		nbCh =  min(MAXNBCHILDREN, max(0 , int(XpectedNbCh + np.random.randn() * VARNBCHILDREN ) ) ) 
+
+		## ensuring that some point survive
+		if pointIndex in MustSurvive:
+			nbCh  = max(1 , nbCh)
+			newMustSurvive.append( len(newPoints) + np.random.randint(0,nbCh) ) ## transmitting to a random children this special property
+
+
+		#print space , "->" , XpectedNbCh, "->",nbCh
 
 		##avoid total extinction
-		if len(newPoints) == 0:
+		if len(newPoints) == 0 and len(MustSurvive) ==0:
 			nbCh = max(1 , nbCh)
-
 		##looking at my father's position
-		FatherDiff = ToFather.get(i,0.) * GRANDFATHERLAG
 
-		#Making the children
-		children , childrenDiffToFather = makeXChildren(p, lowerB,upperB , (nbCh)**CHDISPERSIONPOWER * VAR/((d+1)) , nbCh , diffToFather = FatherDiff )
-		for j,a in enumerate(childrenDiffToFather):
-			newToFather[ len(newPoints) + j ] = a
+		if nbCh > 0:
 
-		#print FatherDiff,"->" , childrenDiffToFather
+			if MustDie.has_key(pointIndex):
+				for j in range(nbCh):
+					newMustDie[ len(newPoints) + j ] = True ## transmitting the mustDie property to children
 
-		## inserting the children
-		offset  = insertXchildren(Edges, newPoints, pointIndex, d , children)
+			FatherDiff = ToFather.get(i,0.) * GRANDFATHERLAG
+	
+			children , childrenDiffToFather = makeXChildren(p, lowerB,upperB , (nbCh)**CHDISPERSIONPOWER * VAR/((d+1)) , nbCh , diffToFather = FatherDiff )
+	
+			for j,a in enumerate(childrenDiffToFather):
+				newToFather[ len(newPoints) + j ] = a
+	
+			if lineageSpecificReductionFactor.has_key(pointIndex):
+				for j in range( len(children) ):
+					newReduction = lineageSpecificReductionFactor[pointIndex] - NonSurvivorReductionFactorDiminution 
+					if newReduction < 0.01:
+						newReduction = 0
+					newlineageSpecificReductionFactor[len(newPoints) + j] = newReduction
+
+			#print FatherDiff,"->" , childrenDiffToFather
+	
+			offset  = insertXchildren(Edges, newPoints, pointIndex, d , children)
 
 
 
 		i += 1#(offset + 1)
 	
-	## shifting points index to avoid spiralling too much
-	shiftPoints(Edges, newToFather, newPoints, d+1 , offset = len(newPoints)/2)
+
+	## account for twist to avoid spiralling too much !!
 
 	ToFather = newToFather.copy()
+	
+	twist = sum(ToFather.values())/len(ToFather)
+	
+	#print 'generation',d , ">" , twist,
 
-	#print ToFather
+	for i in range(len(newPoints)):
+		newPoints[i] = formatAngle( newPoints[i] - twist ) 
 
+	for k in ToFather.keys():
+		ToFather[k] -= twist
+
+	twist = sum(ToFather.values())/len(ToFather)
+	
+	#print ">" , twist
+
+
+	## switch to new generation
 	currentPTS = newPoints[:]
+
+	lineageSpecificReductionFactor = newlineageSpecificReductionFactor.copy()
+	MustSurvive = newMustSurvive[:]
+	MustDie =  newMustDie.copy()
 
 	#print 'generation',d,Points[-1]
 
@@ -324,24 +429,49 @@ while d < nbGen:
 
 	SURVIVE = [True for i in currentPTS] 
 
+	## trying to thin out the ones that must die before the present
+	if len(MustDie)> 0:
+
+		timeFromXtinct = d - softXtinctGen
+		timeToPresent = nbGen - d
+
+		probaXtinct = max( min( max( MustDieMinXtinctProba, timeFromXtinct *1./( nbGen - softXtinctGen)  ) ,MustDieMaxXtinctProba) , 1./timeToPresent)
+		print "generation" , d , "probaXtinct" , probaXtinct , "still have to die:",len(MustDie)
+
+		for k in MustDie.keys():
+			if np.random.random() < probaXtinct :
+				SURVIVE[k] = False
+
+
+
+	## hard extinction
 	if d in SEUIL_XTINCT:
 		## extinction
-		nbSurvivor = max( 2 , len(currentPTS)/THIN )
+		SURVIVE = makeHardExtinction(len(currentPTS) , THIN, 2)
+		print "extinction at",d," nb of surviving lineages : ", sum(SURVIVE)
+		for l in MustSurvive:
+			SURVIVE[l] = True
 
-		print "extinction at",d," nb of surviving lineages : ",nbSurvivor
+	## soft extinction
+	if d == softXtinctGen:
+		##cimple setup : only survivor is first lineage
+		print "soft extinction"
+		MustSurvive = np.random.choice(range(len(currentPTS)), size=nbSurvivivingSoftExtinct, replace=False)
 
-		survivors = np.random.choice(range(len(currentPTS)), size=nbSurvivor, replace=False)
+		for i in range(len(currentPTS)):
+			if not i in MustSurvive:
+				MustDie[i] = True
+				lineageSpecificReductionFactor[i] = NonSurvivorReductionFactor
+	
+	
 
-
-		SURVIVE = [False for i in currentPTS] 
-		for i in survivors:
-			SURVIVE[i] = True
 
 
 t2 = time()
 print "done (",t2-t1,"s)"
 
 print sum([len(g) for g in Points]),"points" , len(Edges),"edges"
+
 
 print "plot..."
 t2 = time()
@@ -380,6 +510,10 @@ ax.axes.get_xaxis().set_visible(False)
 for s in SEUIL_XTINCT:
 	circle1 = plt.Circle((0, 0), s, color='r' , fill=False)
 	ax.add_artist(circle1)
+
+circle1 = plt.Circle((0, 0), softXtinctGen, color='g' , fill=False)
+ax.add_artist(circle1)
+
 
 ax.plot(Xs,Ys, color="black")
 
