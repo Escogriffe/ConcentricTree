@@ -222,7 +222,7 @@ CHDISPERSIONPOWER= 2. ## affect the dispersion of different children round their
 VARNBCHILDREN = 1. ## variance of the number of children per lineage.
 MAXNBCHILDREN = 5 ##maximum number of children
 
-MaxChildrenSpace = 120 ## in mm
+MaxChildrenSpace = 60 ## in mm
 
 
 TREENAME = "test" ## prefix of the output files
@@ -244,9 +244,9 @@ THIN = 5 ## extinction thinning. here it means that only 1 in 5 lineage are left
 
 lineageSpecificReductionFactor = {}
 NonSurvivorReductionFactor = 0.8
-NonSurvivorReductionFactorDiminution = 0. # NonSurvivorReductionFactor/100.
+NonSurvivorReductionFactorDiminution = 0.#NonSurvivorReductionFactor/nbGen
 
-softXtinctGen = int( nbGen*0.25 )
+softXtinctGen = int( nbGen*0.05 )
 
 nbSurvivivingSoftExtinct = 2
 
@@ -254,7 +254,7 @@ MustSurvive = [] ## list of lineage that must survive until the present
 MustDie = {} ## list of lineages that must die sometime before the present
 
 MustDieMinXtinctProba = 0.1
-MustDieMaxXtinctProba = 0.3
+MustDieMaxXtinctProba = 0.1
 
 ## constant point density 
 
@@ -457,10 +457,12 @@ while d < nbGen:
 		##cimple setup : only survivor is first lineage
 		print "soft extinction"
 		MustSurvive = np.random.choice(range(len(currentPTS)), size=nbSurvivivingSoftExtinct, replace=False)
+		#MustSurvive = np.random.choice(range(len(currentPTS)), size=nbSurvivivingSoftExtinct, replace=False)
 
 		for i in range(len(currentPTS)):
 			if not i in MustSurvive:
 				MustDie[i] = True
+				#SURVIVE[i] = False
 				lineageSpecificReductionFactor[i] = NonSurvivorReductionFactor
 	
 	
