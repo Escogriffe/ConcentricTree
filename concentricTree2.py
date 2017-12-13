@@ -5,6 +5,49 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
+def choosePointAboveDist(angleList, a , minA):
+	""" returns the index of an angle in angleList that is at least at minA farther from a """
+
+	OK = False
+
+	count = 0
+	limit = len(angleList)
+
+	while not OK:
+		i = np.random.choice(range(len(currentPTS)), size=1, replace=False)[0]
+		a2 = angleList[i]
+		d = abs( getAngleDist(a , a2) )
+		if d > np.pi:
+			d = abs( 2.*np.pi - d ) 
+
+		if d > minA:
+			return i
+
+		count += 1 
+		if count > limit:
+			break
+
+	return None
+
+def chooseFartherPoint(angleList, a):
+	""" returns the index of the angle in angleList that is farther from a """
+
+	m = 0
+	mi = None
+
+	for i,a2 in enumerate(angleList):
+		d = abs( getAngleDist(a , a2) )
+		if d > np.pi:
+			d = abs( 2.*np.pi - d ) 
+
+		if d>m:
+			m = d
+			mi = i
+
+	#print m,mi
+
+	return mi
+
 
 
 def angleDistToXY(angle,distance):
@@ -27,7 +70,7 @@ def formatAngle(angle):
 def getAngleDist(a1 , a2):
 	""" always a positive angle """
 
-	if a2 > a1:
+	if a2 >= a1:
 		return a2 - a1
 
 	return a2 + (np.pi*2 - a1)
@@ -134,9 +177,9 @@ def determineAvailableAnglesAndArc(p , pointIndex, currentPTS, newPoints , lower
 			upperB =  getAngleDist(p ,currentPTS[U] )
 
 		if len(newPoints) == 0: ## to the "left" : use new pointd (except for the first point)
-			lowerB = - getAngleDist( currentPTS[pointIndex-1], p) 
+			lowerB = - getAngleDist( currentPTS[pointIndex-1], p) #*0.25
 		else:
-			lowerB = - getAngleDist( newPoints[-1], p)
+			lowerB = - getAngleDist( newPoints[-1], p) #*(2./3.)
 
 	## reduction of the available angle
 	lowerB *= lowerRedfactor
@@ -190,19 +233,35 @@ def write_tree(filename , Points, Edges):
 ##############################################
 ###### PARAMETERS ############################
 
+
+import sys
+
+TREENAME = "test" ## prefix of the output files
+
+doPlot  = True
+
+if len(sys.argv)>1:
+	TREENAME = sys.argv[1]
+
+if len(sys.argv)>2:
+	if sys.argv[2].capitalize() == "FALSE" or sys.argv[2] in ["f","F","0"]:
+		doPlot = False
+
+
 mmPerGen = 0.5  ### number of millimeters per generations. 
-totalSizeInmm = 500.
+totalSizeInmm = 2500.
 
 nbGen = int(totalSizeInmm / mmPerGen )### number of generation. Here set so that the final tree has a total radius of 500mm (1 meter of diameter)
+# -> 500 generations
+EXPECTEDNBPTPERMM = 0.05 * mmPerGen
+# ExpectedNbPtAtOuterCircle = totalSizeInmm * 2. * np.pi * 0.05
 
-ExpectedNbPtAtOuterCircle = totalSizeInmm * 2. * np.pi * 0.05
-
-EXPECTEDNBPTPERMM =  ExpectedNbPtAtOuterCircle / ( totalSizeInmm * 2. * np.pi ) #* mmPerGen ## determine how many "biological niche" there is per millimeter of circle perimeter (1 circle = 1 generation)
+# EXPECTEDNBPTPERMM =  ExpectedNbPtAtOuterCircle / ( totalSizeInmm * 2. * np.pi ) #* mmPerGen ## determine how many "biological niche" there is per millimeter of circle perimeter (1 circle = 1 generation)
 ### currently 0.05 niche per mm --> should create about 1 point every 2 cm.
 
 
 VAR=0.25 ## variance of the angle between a father and its children
-GRANDFATHERLAG=0.5 ##DO NOT SET ABOVE 1 importance of the position of the grand-father -> determine if the father and children will follow a coherent curve 
+GRANDFATHERLAG=0.8 ##DO NOT SET ABOVE 1 importance of the position of the grand-father -> determine if the father and children will follow a coherent curve 
 
 if GRANDFATHERLAG>1.:
 	print "you have set the parameter GRANDFATHERLAG above 1. Beware weird behavior."
@@ -222,7 +281,7 @@ CHDISPERSIONPOWER= 2. ## affect the dispersion of different children round their
 VARNBCHILDREN = 1. ## variance of the number of children per lineage.
 MAXNBCHILDREN = 5 ##maximum number of children
 
-MaxChildrenSpace = 60 ## in mm
+MaxChildrenSpace = 100 ## in mm
 
 
 TREENAME = "test" ## prefix of the output files
@@ -237,7 +296,7 @@ SEUIL_XTINCT = [ #]
 		int( ( (1. - (1.86/100.) ) *nbGen  ) )] ## extinction thresholds
 
 
-THIN = 5 ## extinction thinning. here it means that only 1 in 5 lineage are left alive (at least 2)
+THIN = 6 ## extinction thinning. here it means that only 1 in 5 lineage are left alive (at least 2)
 
 
 ## soft extinction
@@ -254,8 +313,9 @@ MustSurvive = [] ## list of lineage that must survive until the present
 MustDie = {} ## list of lineages that must die sometime before the present
 
 MustDieMinXtinctProba = 0.1
-MustDieMaxXtinctProba = 0.1
+MustDieMaxXtinctProba = 0.15
 
+probaXtinct = None
 ## constant point density 
 
 
@@ -284,6 +344,17 @@ t1 = time()
 ToFather = {}
 
 
+## due to the order in which computation are done, there is a bias for an upper angle ~0.66 bigger than the lower one.
+## let's try to correct that dynamically 
+UAf = []
+LAf = []
+UA = []
+LA = []
+
+ULratio = 1.
+
+
+
 Points.append([])
 i = 0
 while i<len(currentPTS):
@@ -293,9 +364,16 @@ while i<len(currentPTS):
 
 while d < nbGen:
 
+	if len(UA)>0:
+		ULratio =  abs(sum(UA[-1000:])  / sum(LA[-1000:]) )
 
 	if d%100 == 0:
-		print "generation", d, "(",len(currentPTS),"points)"
+		print "generation", d, "(",len(currentPTS),"points)", ULratio
+		if len(MustDie)>0:
+			print " - probaXtinct" , probaXtinct , "still have to die:",len(MustDie)
+		else:
+			print ""
+
 
 	newPoints = [] ## points created this generation
 	newToFather = {} ## difference of angle to the parent
@@ -326,9 +404,25 @@ while d < nbGen:
 															 pointIndex, 
 															 currentPTS, 
 															 newPoints , 
-															 redFactor, 
+															 redFactor , 
 															 redFactor, 
 															 (d+1)*mmPerGen)
+
+		#if len(newPoints) == 0:
+		#	UAf.append(upperB)
+		#	LAf.append(lowerB)
+		#else:
+		#	UA.append(upperB)
+		#	LA.append(lowerB)
+		UA.append(upperB)
+		LA.append(lowerB)
+		# lower angle specific twist correction:
+		if ULratio < 1.:
+			lowerB *=ULratio
+		else:
+			upperB /= ULratio
+
+
 
 
 		## correction when too much space is available (typically after extinction)
@@ -436,7 +530,7 @@ while d < nbGen:
 		timeToPresent = nbGen - d
 
 		probaXtinct = max( min( max( MustDieMinXtinctProba, timeFromXtinct *1./( nbGen - softXtinctGen)  ) ,MustDieMaxXtinctProba) , 1./timeToPresent)
-		print "generation" , d , "probaXtinct" , probaXtinct , "still have to die:",len(MustDie)
+		
 
 		for k in MustDie.keys():
 			if np.random.random() < probaXtinct :
@@ -456,7 +550,14 @@ while d < nbGen:
 	if d == softXtinctGen:
 		##cimple setup : only survivor is first lineage
 		print "soft extinction"
-		MustSurvive = np.random.choice(range(len(currentPTS)), size=nbSurvivivingSoftExtinct, replace=False)
+		if nbSurvivivingSoftExtinct == 2: ## special prodedure to choose point that are farther apart
+			i1 = np.random.choice(range(len(currentPTS)), size=1, replace=False)[0]
+			i2 = choosePointAboveDist(currentPTS, currentPTS[i1] , np.pi * 2./3.)
+			#i2 = chooseFartherPoint(currentPTS, currentPTS[i1])
+			MustSurvive = [i1,i2]
+			
+		else:
+			MustSurvive = np.random.choice(range(len(currentPTS)), size=nbSurvivivingSoftExtinct, replace=False)
 		#MustSurvive = np.random.choice(range(len(currentPTS)), size=nbSurvivivingSoftExtinct, replace=False)
 
 		for i in range(len(currentPTS)):
@@ -465,6 +566,7 @@ while d < nbGen:
 				#SURVIVE[i] = False
 				lineageSpecificReductionFactor[i] = NonSurvivorReductionFactor
 	
+
 	
 
 
@@ -474,55 +576,66 @@ print "done (",t2-t1,"s)"
 
 print sum([len(g) for g in Points]),"points" , len(Edges),"edges"
 
+if len(UAf)>0:
+	print "mean UAf", sum(UAf)/len(UAf)
+	print "mean LAf",sum(LAf)/len(LAf)
+print "mean UA", sum(UA)/len(UA)
+print "mean LA", sum(LA)/len(LA)
+print ULratio
 
-print "plot..."
-t2 = time()
 
-Xs = []
-Ys = []
 
-for i,e in enumerate(Edges):
 
-	try:
-
-		p1 = Points[e[0]][e[1]]
-		p2 = Points[e[2]][e[3]]
-
-		Xs.append( p1[0] )
-		Xs.append( p2[0] )
-		Xs.append( None )
+if doPlot:
+	print "plot..."
+	t2 = time()
 	
-		Ys.append( p1[1] )
-		Ys.append( p2[1] )
-		Ys.append( None )
-
-	except:
-#		continue
-		print e
-		print len(Points[e[0]]) , len(Points[e[2]])
-
-	print i*100./len(Edges),"%","\r",
-
-fig = plt.figure(facecolor='white')
-ax = plt.axes(frameon=False)
-ax.axes.get_yaxis().set_visible(False)
-ax.axes.get_xaxis().set_visible(False)
-
-
-for s in SEUIL_XTINCT:
-	circle1 = plt.Circle((0, 0), s, color='r' , fill=False)
+	Xs = []
+	Ys = []
+	
+	for i,e in enumerate(Edges):
+	
+		try:
+	
+			p1 = Points[e[0]][e[1]]
+			p2 = Points[e[2]][e[3]]
+	
+			Xs.append( p1[0] )
+			Xs.append( p2[0] )
+			Xs.append( None )
+		
+			Ys.append( p1[1] )
+			Ys.append( p2[1] )
+			Ys.append( None )
+	
+		except:
+	#		continue
+			print e
+			print len(Points[e[0]]) , len(Points[e[2]])
+	
+		print i*100./len(Edges),"%","\r",
+	
+	fig = plt.figure(facecolor='white')
+	ax = plt.axes(frameon=False)
+	ax.axes.get_yaxis().set_visible(False)
+	ax.axes.get_xaxis().set_visible(False)
+	
+	
+	for s in SEUIL_XTINCT:
+		circle1 = plt.Circle((0, 0), s, color='r' , fill=False)
+		ax.add_artist(circle1)
+	
+	circle1 = plt.Circle((0, 0), softXtinctGen, color='g' , fill=False)
 	ax.add_artist(circle1)
+	
+	
+	ax.plot(Xs,Ys, color="black")
+	
+	
+	t3 = time()
+	print "took",t3 - t2,"s"
+	plt.show()
 
-circle1 = plt.Circle((0, 0), softXtinctGen, color='g' , fill=False)
-ax.add_artist(circle1)
-
-
-ax.plot(Xs,Ys, color="black")
-
-
-t3 = time()
-print "took",t3 - t2,"s"
-plt.show()
 
 
 
